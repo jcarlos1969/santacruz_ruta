@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ruta A-B Santa Cruz</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --r1:#00e5ff; --r2:#ff6b35; --bg:#0a0a12; --panel:#13131f; --text:#e8e8f0; --pasajero:#f9a8d4; }
+  body { font-family: sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  
+  /* Selector de Rol */
+  #roleScreen { position: fixed; inset: 0; background: var(--bg); z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .btn-role { padding: 20px; margin: 10px; width: 80%; border: 2px solid #333; border-radius: 15px; background: var(--panel); color: white; font-weight: bold; }
+  
+  #map { flex: 1; width: 100%; }
+  
+  /* Botón GPS */
+  .gps-btn { position: fixed; right: 20px; bottom: 100px; width: 60px; height: 60px; border-radius: 50%; background: var(--pasajero); border: 3px solid white; z-index: 1000; font-size: 24px; display: none; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+
+  .bar { display: flex; background: var(--panel); padding: 10px; gap: 10px; border-top: 1px solid #333; }
+  .btn { flex: 1; padding: 15px; border-radius: 10px; border: 1px solid #444; background: transparent; color: white; font-weight: bold; }
+  .active-ab { border-color: var(--r1); color: var(--r1); }
+  .active-ba { border-color: var(--r2); color: var(--r2); }
+  
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.9); border: 1px solid white; padding: 10px 20px; border-radius: 20px; z-index: 10001; display: none; text-align: center; width: 80%; }
+</style>
+</head>
+<body>
+
+<div id="roleScreen">
+  <h2 style="color:var(--r1)">SANTA CRUZ RUTA A-B</h2>
+  <button class="btn-role" onclick="init('conductor')" style="border-color:#34d399">🚌 CONDUCTOR</button>
+  <button class="btn-role" onclick="init('pasajero')" style="border-color:var(--pasajero)">🧍 PASAJERO</button>
+</div>
+
+<div id="map"></div>
+<button id="gpsBtn" class="gps-btn" onclick="activarGPS()">📍</button>
+
+<div class="bar">
+  <button id="btnAB" class="btn" onclick="ruta('ab')">🔵 A→B</button>
+  <button id="btnBA" class="btn" onclick="ruta('ba')">🟠 B→A</button>
+</div>
+
+<div id="msg" class="toast"></div>
+
+<script>
+const PTA = [-17.7086389, -63.11375], PTB = [-17.762287, -63.158758];
+let user = null, modo = null, linea = null, miPos = null;
+
+const map = L.map('map', {zoomControl:false}).setView([-17.735, -63.136], 13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+function init(rol) {
+  user = rol;
+  document.getElementById('roleScreen').style.display = 'none';
+  if(rol === 'pasajero') document.getElementById('gpsBtn').style.display = 'flex';
+  show("✅ Modo " + rol + " activo. Tiqueá tu ruta.");
+}
+
+async function ruta(m) {
+  if(linea) map.removeLayer(linea);
+  modo = m;
+  document.getElementById('btnAB').className = 'btn ' + (m==='ab'?'active-ab':'');
+  document.getElementById('btnBA').className = 'btn ' + (m==='ba'?'active-ba':'');
+  
+  const p1 = m==='ab'?PTA:PTB, p2 = m==='ab'?PTB:PTA;
+  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1[1]},${p1[0]};${p2[1]},${p2[0]}?overview=full&geometries=geojson`);
+  const data = await res.json();
+  linea = L.polyline(data.routes[0].geometry.coordinates.map(c=>[c[1],c[0]]), {color: m==='ab'?'#00e5ff':'#ff6b35', weight:6}).addTo(map);
+  map.fitBounds(linea.getBounds(), {padding:[40,40]});
+}
+
+function activarGPS() {
+  if(!modo) return show("⚠️ Primero tiqueá tu ruta (A→B o B→A)");
+  
+  show("🛰️ Buscando señal GPS...");
+  navigator.geolocation.getCurrentPosition(
+    (p) => {
+      const {latitude, longitude} = p.coords;
+      if(miPos) map.removeLayer(miPos);
+      miPos = L.circleMarker([latitude, longitude], {radius:10, color:'white', fillColor:'#f9a8d4', fillOpacity:1}).addTo(map);
+      map.flyTo([latitude, longitude], 16);
+      show("✅ Ubicación marcada en ruta");
+    },
+    (e) => {
+      show("❌ Error de GPS. Si estás en Chrome, necesitas usar una dirección HTTPS (ej. GitHub Pages).");
+    },
+    {enableHighAccuracy: true}
+  );
+}
+
+function show(m) {
+  const t = document.getElementById('msg');
+  t.textContent = m; t.style.display = 'block';
+  setTimeout(()=>t.style.display='none', 4000);
+}
+</script>
+</body>
+</html>
