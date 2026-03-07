@@ -78,4 +78,143 @@
     <div class="stat-item"><div class="dot" style="background:var(--au)"></div> 👋 Pasajeros: <b id="countUsers">0</b></div>
     <div class="stat-item"><div class="dot" style="background:#facc15"></div> ⚠️ Alertas: <b id="cTotal">0</b></div>
   </div>
-  <button class="btn danger" onclick="resetApp()" style="width:100%">
+  <button class="btn danger" onclick="resetApp()" style="width:100%">🔄 REINICIAR RUTA Y LIMPIAR MAPA</button>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// --- CONFIGURACIÓN FIREBASE ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCWK5RIkqaW2OCHKKWs9MejIB-g96GCfj4",
+  authDomain: "trufiapp.firebaseapp.com",
+  databaseURL: "https://trufiapp-default-rtdb.firebaseio.com",
+  projectId: "trufiapp",
+  storageBucket: "trufiapp.firebasestorage.app",
+  messagingSenderId: "1071494070293",
+  appId: "1:1071494070293:web:b0093fea81f53332df0e1c"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const userId = "user_" + Math.random().toString(36).substr(2, 9);
+
+// --- LÓGICA DE MAPA ---
+const PTA = [-17.7086389, -63.11375]; // Trapero M
+const PTB = [-17.762287,  -63.158758]; // Mutualista
+const map = L.map('map', { zoomControl: false }).setView([-17.735, -63.136], 13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+let userMarker, gpsActive = false, currentRole = null, routePoly;
+let alerts = []; // Almacén de alertas visuales
+
+function setUserRole(role) {
+  currentRole = role;
+  document.getElementById('roleLabel').innerText = role === 'driver' ? "CONDUCTOR 🚗" : "PASAJERO 🚶";
+  document.getElementById('roleLabel').classList.add('active');
+  document.querySelectorAll('.controls .btn').forEach(b => b.classList.remove('active-btn'));
+  document.getElementById(role === 'driver' ? 'modeDriver' : 'modeRider').classList.add('active-btn');
+  showToast("Modo seleccionado");
+}
+
+async function setRoute(type) {
+  if (routePoly) map.removeLayer(routePoly);
+  const start = type === 'r1' ? PTA : PTB;
+  const end = type === 'r1' ? PTB : PTA;
+  const color = type === 'r1' ? '#00e5ff' : '#ff6b35';
+  
+  document.getElementById('btnR1').classList.toggle('active-btn', type === 'r1');
+  document.getElementById('btnR2').classList.toggle('active-btn', type === 'r2');
+
+  const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${end[1]},${end[0]}?overview=full&geometries=geojson`;
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+    const pts = d.routes[0].geometry.coordinates.map(c => [c[1], c[0]]);
+    routePoly = L.polyline(pts, { color, weight: 6, opacity: 0.8 }).addTo(map);
+    map.fitBounds(routePoly.getBounds(), { padding: [40, 40] });
+  } catch (e) { showToast("Error al cargar ruta"); }
+}
+
+function toggleGPS() {
+  const btn = document.getElementById('gpsBtn');
+  const statusMsg = document.getElementById('statusPassenger');
+
+  if (!gpsActive) {
+    if (!currentRole) return showToast("Elige ROL primero");
+    gpsActive = true;
+    btn.innerText = "📍 GPS: ON";
+    btn.classList.add('active-btn');
+    map.locate({ watch: true, enableHighAccuracy: true });
+    
+    if (currentRole === 'rider') {
+      db.ref('pasajeros_activos/' + userId).set({ active: true, time: Date.now() });
+      statusMsg.style.display = 'block';
+    }
+  } else {
+    gpsActive = false;
+    btn.innerText = "📍 GPS: OFF";
+    btn.classList.remove('active-btn');
+    map.stopLocate();
+    if (userMarker) map.removeLayer(userMarker);
+    userMarker = null;
+    
+    db.ref('pasajeros_activos/' + userId).remove();
+    statusMsg.style.display = 'none';
+  }
+}
+
+// FUNCIÓN DE REINICIO TOTAL PARA EL CHOFER
+function resetApp() {
+  if (confirm("¿Deseas reiniciar la ruta y limpiar el mapa?")) {
+    // 1. Quitar ruta visual
+    if (routePoly) {
+      map.removeLayer(routePoly);
+      routePoly = null;
+    }
+    // 2. Limpiar alertas del mapa
+    alerts.forEach(a => map.removeLayer(a.marker));
+    alerts = [];
+    document.getElementById('cTotal').innerText = "0";
+
+    // 3. Resetear botones de navegación
+    document.getElementById('btnR1').classList.remove('active-btn');
+    document.getElementById('btnR2').classList.remove('active-btn');
+
+    // 4. Apagar GPS si estaba encendido
+    if (gpsActive) toggleGPS();
+
+    showToast("Mapa limpio - Listo para nueva ruta");
+  }
+}
+
+// Sincronización de pasajeros en tiempo real
+db.ref('pasajeros_activos').on('value', (snapshot) => {
+  document.getElementById('countUsers').innerText = snapshot.numChildren();
+});
+
+map.on('locationfound', (e) => {
+  if (!userMarker) {
+    userMarker = L.marker(e.latlng, { icon: L.divIcon({ className: 'user-pos', iconSize: [14, 14] }) }).addTo(map);
+  } else {
+    userMarker.setLatLng(e.latlng);
+  }
+  map.panTo(e.latlng);
+  document.getElementById('dA').innerText = Math.round(map.distance(e.latlng, PTA)) + "m";
+  document.getElementById('dB').innerText = Math.round(map.distance(e.latlng, PTB)) + "m";
+});
+
+function showToast(m) {
+  const t = document.getElementById('toast');
+  t.innerText = m; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// Marcadores de terminales
+L.marker(PTA, { icon: L.divIcon({ html: '<div style="background:#00e5ff; color:#000; font-weight:800; padding:4px 8px; border-radius:10px; border:2px solid #000; font-size:10px">TRAPERO</div>', className:''}) }).addTo(map);
+L.marker(PTB, { icon: L.divIcon({ html: '<div style="background:#ff6b35; color:#000; font-weight:800; padding:4px 8px; border-radius:10px; border:2px solid #000; font-size:10px">MUTUALISTA</div>', className:''}) }).addTo(map);
+
+window.addEventListener('beforeunload', () => { if(gpsActive) db.ref('pasajeros_activos/' + userId).remove(); });
+</script>
+</body>
+</html>
